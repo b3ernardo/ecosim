@@ -15,9 +15,7 @@
 #include <thread>
 #include <mutex>
 
-std::mutex plant_mtx;
-std::mutex herbivore_mtx;
-std::mutex carnivore_mtx;
+std::mutex entity_mtx;
 
 static const uint32_t NUM_ROWS = 15;
 
@@ -88,7 +86,7 @@ bool random_action(float probability) {
 
 // Thread da planta
 void plant_thread(int i, int j) {
-    plant_mtx.lock();
+    entity_mtx.lock();
     // Caso tenha atingido 10 anos, a planta morre
     if (entity_grid[i][j].age == 10) {
         entity_grid[i][j] = {empty, 0, 0};
@@ -121,11 +119,11 @@ void plant_thread(int i, int j) {
             }
         }
     }
-    plant_mtx.unlock();
+    entity_mtx.unlock();
 }
 // Thread do herbívoro
 void herbivore_thread(int i, int j) {
-    herbivore_mtx.lock();
+    entity_mtx.lock();
     // Caso tenha atingido 50 anos, ou a energia tenha acabado, o herbívoro morre
     if (entity_grid[i][j].age == 50 || entity_grid[i][j].energy <= 0) {
         entity_grid[i][j] = {empty, 0, 0};
@@ -203,13 +201,13 @@ void herbivore_thread(int i, int j) {
             }
         }
     }
-    herbivore_mtx.unlock();
+    entity_mtx.unlock();
 }
 // Thread do carnívoro
 void carnivore_thread(int i, int j) {
-    carnivore_mtx.lock();
-    // Caso tenha atingido 100 anos, ou a energia tenha acabado, o carnívoro morre
-    if (entity_grid[i][j].age == 100 || entity_grid[i][j].energy <= 0) {
+    entity_mtx.lock();
+    // Caso tenha atingido 80 anos, ou a energia tenha acabado, o carnívoro morre
+    if (entity_grid[i][j].age == 80 || entity_grid[i][j].energy <= 0) {
         entity_grid[i][j] = {empty, 0, 0};
     } else {
         // Caso o carnívoro não tenha morrido, incrementa a idade
@@ -284,7 +282,7 @@ void carnivore_thread(int i, int j) {
             }
         }
     }
-    carnivore_mtx.unlock();
+    entity_mtx.unlock();
 }
 
 int main() {
