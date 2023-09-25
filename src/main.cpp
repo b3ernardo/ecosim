@@ -1,9 +1,9 @@
 /*
-	Universidade Federal de Minas Gerais
-	Exercício Computacional 3 - EcoSim
-	Aluno: Bernardo de Souza Silva
-	Matrícula: 2020084290
-	Disciplina: Automação em Tempo Real
+    Universidade Federal de Minas Gerais
+    Exercício Computacional 3 - EcoSim
+    Aluno: Bernardo de Souza Silva
+    Matrícula: 2020084290
+    Disciplina: Automação em Tempo Real
 */
 
 #define CROW_MAIN
@@ -12,6 +12,12 @@
 #include "crow_all.h"
 #include "json.hpp"
 #include <random>
+#include <thread>
+#include <mutex>
+
+std::mutex plant_mtx;
+std::mutex herbivore_mtx;
+std::mutex carnivore_mtx;
 
 static const uint32_t NUM_ROWS = 15;
 
@@ -80,11 +86,213 @@ bool random_action(float probability) {
     return distribution(generator) < probability;
 }
 
+// Thread da planta
+void plant_thread(int i, int j) {
+    plant_mtx.lock();
+    // Caso tenha atingido 10 anos, a planta morre
+    if (entity_grid[i][j].age == 10) {
+        entity_grid[i][j] = {empty, 0, 0};
+    } else {
+        // Caso a planta não tenha morrido, incrementa a idade
+        entity_grid[i][j].age++;
+        // Lógica de reprodução da planta
+        if (random_action(PLANT_REPRODUCTION_PROBABILITY)) {
+            // Verifica as casas adjacentes e armazena no vetor available_pos
+            if ((i + 1) < NUM_ROWS && entity_grid[i + 1][j].type == empty) {
+                available_pos.push_back(std::make_pair(i + 1, j));
+            }
+            if (i > 0 && entity_grid[i - 1][j].type == empty) {
+                available_pos.push_back(std::make_pair(i - 1, j));
+            }
+            if ((j + 1) < NUM_ROWS && entity_grid[i][j + 1].type == empty) {
+                available_pos.push_back(std::make_pair(i, j + 1));
+            }
+            if (j > 0 && entity_grid[i][j - 1].type == empty) {
+                available_pos.push_back(std::make_pair(i, j - 1));
+            }
+            if (!available_pos.empty()) {
+                std::uniform_int_distribution<> distribution(0, available_pos.size() - 1);
+                int drawing = distribution(generator);
+                int line = available_pos[drawing].first;
+                int column = available_pos[drawing].second;
+                entity_grid[line][column].type = plant;
+                analyzed_pos.push_back(std::make_pair(line, column));
+                available_pos.clear();
+            }
+        }
+    }
+    plant_mtx.unlock();
+}
+// Thread do herbívoro
+void herbivore_thread(int i, int j) {
+    herbivore_mtx.lock();
+    // Caso tenha atingido 50 anos, ou a energia tenha acabado, o herbívoro morre
+    if (entity_grid[i][j].age == 50 || entity_grid[i][j].energy <= 0) {
+        entity_grid[i][j] = {empty, 0, 0};
+    } else {
+        // Caso o herbívoro não tenha morrido, incrementa a idade
+        entity_grid[i][j].age++;
+        // Lógica de alimentação do herbívoro
+        if ((i + 1) < NUM_ROWS && entity_grid[i + 1][j].type == plant && random_action(HERBIVORE_EAT_PROBABILITY)) {
+            entity_grid[i + 1][j] = {empty, 0, 0};
+            entity_grid[i][j].energy += 30;
+        }
+        if (i > 0 && entity_grid[i - 1][j].type == plant && random_action(HERBIVORE_EAT_PROBABILITY)) {
+            entity_grid[i - 1][j] = {empty, 0, 0};
+            entity_grid[i][j].energy += 30;
+        }
+        if ((j + 1) < NUM_ROWS && entity_grid[i][j + 1].type == plant && random_action(HERBIVORE_EAT_PROBABILITY)) {
+            entity_grid[i][j + 1] = {empty, 0, 0};
+            entity_grid[i][j].energy += 30;
+        }
+        if (j > 0 && entity_grid[i][j - 1].type == plant && random_action(HERBIVORE_EAT_PROBABILITY)) {
+            entity_grid[i][j - 1] = {empty, 0, 0};
+            entity_grid[i][j].energy += 30;
+        }
+        // Lógica de reprodução do herbívoro
+        if (random_action(HERBIVORE_REPRODUCTION_PROBABILITY) && entity_grid[i][j].energy >= 20) {
+            // Verifica as casas adjacentes e armazena no vetor available_pos
+            if ((i + 1) < NUM_ROWS && entity_grid[i + 1][j].type == empty) {
+                available_pos.push_back(std::make_pair(i + 1, j));
+            }
+            if (i > 0 && entity_grid[i - 1][j].type == empty) {
+                available_pos.push_back(std::make_pair(i - 1, j));
+            }
+            if ((j + 1) < NUM_ROWS && entity_grid[i][j + 1].type == empty) {
+                available_pos.push_back(std::make_pair(i, j + 1));
+            }
+            if (j > 0 && entity_grid[i][j - 1].type == empty) {
+                available_pos.push_back(std::make_pair(i, j - 1));
+            }
+            if (!available_pos.empty()) {
+                std::uniform_int_distribution<> distribution(0, available_pos.size() - 1);
+                int drawing = distribution(generator);
+                int line = available_pos[drawing].first;
+                int column = available_pos[drawing].second;
+                entity_grid[line][column].type = herbivore;
+                entity_grid[line][column].energy = 100;
+                entity_grid[i][j].energy = entity_grid[i][j].energy - 10;
+                analyzed_pos.push_back(std::make_pair(line, column));
+                available_pos.clear();
+            }
+        }
+        // Lógica de movimentação do herbívoro
+        if (random_action(HERBIVORE_MOVE_PROBABILITY)) {
+            // Verifica as casas adjacentes e armazena no vetor available_pos
+            if ((i + 1) < NUM_ROWS && entity_grid[i + 1][j].type == empty) {
+                available_pos.push_back(std::make_pair(i + 1, j));
+            }
+            if (i > 0 && entity_grid[i - 1][j].type == empty) {
+                available_pos.push_back(std::make_pair(i - 1, j));
+            }
+            if ((j + 1) < NUM_ROWS && entity_grid[i][j + 1].type == empty) {
+                available_pos.push_back(std::make_pair(i, j + 1));
+            }
+            if (j > 0 && entity_grid[i][j - 1].type == empty) {
+                available_pos.push_back(std::make_pair(i, j - 1));
+            }
+            if (!available_pos.empty()) {
+                std::uniform_int_distribution<> distribution(0, available_pos.size() - 1);
+                int drawing = distribution(generator);
+                int line = available_pos[drawing].first;
+                int column = available_pos[drawing].second;
+                entity_grid[line][column] = {herbivore, entity_grid[i][j].energy - 5, entity_grid[i][j].age};
+                entity_grid[i][j] = {empty, 0, 0};
+                analyzed_pos.push_back(std::make_pair(line, column));
+                available_pos.clear();
+            }
+        }
+    }
+    herbivore_mtx.unlock();
+}
+// Thread do carnívoro
+void carnivore_thread(int i, int j) {
+    carnivore_mtx.lock();
+    // Caso tenha atingido 100 anos, ou a energia tenha acabado, o carnívoro morre
+    if (entity_grid[i][j].age == 100 || entity_grid[i][j].energy <= 0) {
+        entity_grid[i][j] = {empty, 0, 0};
+    } else {
+        // Caso o carnívoro não tenha morrido, incrementa a idade
+        entity_grid[i][j].age++;
+        // Lógica de alimentação do carnívoro
+        if (i + 1 < NUM_ROWS && entity_grid[i + 1][j].type == herbivore && random_action(CARNIVORE_EAT_PROBABILITY)) {
+            entity_grid[i + 1][j] = {empty, 0, 0};
+            entity_grid[i][j].energy += 20;
+        }
+        if (i > 0 && entity_grid[i - 1][j].type == herbivore && random_action(CARNIVORE_EAT_PROBABILITY)) {
+            entity_grid[i - 1][j] = {empty, 0, 0};
+            entity_grid[i][j].energy += 20;
+        }
+        if (j + 1 < NUM_ROWS && entity_grid[i][j + 1].type == herbivore && random_action(CARNIVORE_EAT_PROBABILITY)) {
+            entity_grid[i][j + 1] = {empty, 0, 0};
+            entity_grid[i][j].energy += 20;
+        }
+        if (j > 0 && entity_grid[i][j - 1].type == herbivore && random_action(CARNIVORE_EAT_PROBABILITY)) {
+            entity_grid[i][j - 1] = {empty, 0, 0};
+            entity_grid[i][j].energy += 20;
+        }
+        // Lógica de reprodução do carnívoro
+        if (random_action(CARNIVORE_REPRODUCTION_PROBABILITY) && entity_grid[i][j].energy >= 20) {
+            // Verifica as casas adjacentes e armazena no vetor available_pos
+            if ((i + 1) < NUM_ROWS && entity_grid[i + 1][j].type == empty) {
+                available_pos.push_back(std::make_pair(i + 1, j));
+            }
+            if (i > 0 && entity_grid[i - 1][j].type == empty) {
+                available_pos.push_back(std::make_pair(i - 1, j));
+            }
+            if ((j + 1) < NUM_ROWS && entity_grid[i][j + 1].type == empty) {
+                available_pos.push_back(std::make_pair(i, j + 1));
+            }
+            if (j > 0 && entity_grid[i][j - 1].type == empty) {
+                available_pos.push_back(std::make_pair(i, j - 1));
+            }
+            if (!available_pos.empty()) {
+                std::uniform_int_distribution<> distribution(0, available_pos.size() - 1);
+                int drawing = distribution(generator);
+                int line = available_pos[drawing].first;
+                int column = available_pos[drawing].second;
+                entity_grid[line][column] = {carnivore, 100, 0};
+                entity_grid[i][j].energy = entity_grid[i][j].energy - 10;
+                analyzed_pos.push_back(std::make_pair(line, column));
+                available_pos.clear();
+            }
+        }
+        // Lógica de movimentação do carnívoro
+        if (random_action(CARNIVORE_MOVE_PROBABILITY)) {
+            // Verifica as casas adjacentes e armazena no vetor available_pos
+            if ((i + 1) < NUM_ROWS && entity_grid[i + 1][j].type == empty) {
+                available_pos.push_back(std::make_pair(i + 1, j));
+            }
+            if (i > 0 && entity_grid[i - 1][j].type == empty) {
+                available_pos.push_back(std::make_pair(i - 1, j));
+            }
+            if ((j + 1) < NUM_ROWS && entity_grid[i][j + 1].type == empty) {
+                available_pos.push_back(std::make_pair(i, j + 1));
+            }
+            if (j > 0 && entity_grid[i][j - 1].type == empty) {
+                available_pos.push_back(std::make_pair(i, j - 1));
+            }
+            if (!available_pos.empty()) {
+                std::uniform_int_distribution<> distribution(0, available_pos.size() - 1);
+                int drawing = distribution(generator);
+                int line = available_pos[drawing].first;
+                int column = available_pos[drawing].second;
+                entity_grid[line][column] = {carnivore, entity_grid[i][j].energy - 5, entity_grid[i][j].age};
+                entity_grid[i][j] = {empty, 0, 0};
+                analyzed_pos.push_back(std::make_pair(line, column));
+                available_pos.clear();
+            }
+        }
+    }
+    carnivore_mtx.unlock();
+}
+
 int main() {
     crow::SimpleApp app;
 
     // Endpoint que serve a página HTML
-    CROW_ROUTE(app, "/")([](crow::request &, crow::response &res) {
+    CROW_ROUTE(app, "/")
+    ([](crow::request &, crow::response &res) {
         // Retorna o conteúdo HTML
         res.set_static_file_info_unsafe("../public/index.html");
         res.end(); 
@@ -149,197 +357,18 @@ int main() {
                 if (!analyzed) {
                     // Caso a entidade seja do tipo planta
                     if (entity_grid[i][j].type == plant) {
-                        // Caso tenha atingido 10 anos, a planta morre
-                        if (entity_grid[i][j].age == 10) {
-                            entity_grid[i][j] = {empty, 0, 0};
-                        } else {
-                            // Caso a planta não tenha morrido, incrementa a idade
-                            entity_grid[i][j].age++;
-                            // Lógica de reprodução da planta
-                            if (random_action(PLANT_REPRODUCTION_PROBABILITY)) {
-                                // Verifica as casas adjacentes e armazena no vetor available_pos 
-                                if ((i + 1) < NUM_ROWS && entity_grid[i + 1][j].type == empty) {
-                                    available_pos.push_back(std::make_pair(i + 1, j));
-                                }
-                                if (i > 0 && entity_grid[i - 1][j].type == empty) {
-                                    available_pos.push_back(std::make_pair(i - 1, j));
-                                }
-                                if ((j + 1) < NUM_ROWS && entity_grid[i][j + 1].type == empty) {
-                                    available_pos.push_back(std::make_pair(i, j + 1));
-                                }
-                                if (j > 0 && entity_grid[i][j - 1].type == empty) {
-                                    available_pos.push_back(std::make_pair(i, j - 1));
-                                }
-                                if (!available_pos.empty()) {
-                                    std::uniform_int_distribution<> distribution(0, available_pos.size()-1);
-                                    int drawing = distribution(generator);
-                                    int line = available_pos[drawing].first;
-                                    int column = available_pos[drawing].second;
-                                    entity_grid[line][column].type = plant;
-                                    analyzed_pos.push_back(std::make_pair(line, column));
-                                    available_pos.clear();
-                                }
-                            }
-                        }
+                        std::thread tplant(plant_thread, i, j);
+                        tplant.join();
                     } 
                     // Caso a entidade seja do tipo herbívoro
                     else if (entity_grid[i][j].type == herbivore) {
-                        // Caso tenha atingido 50 anos, ou a energia tenha acabado, o herbívoro morre
-                        if (entity_grid[i][j].age == 50 || entity_grid[i][j].energy <= 0) {
-                            entity_grid[i][j] = {empty, 0, 0};
-                        } else {
-                            // Caso o herbívoro não tenha morrido, incrementa a idade
-                            entity_grid[i][j].age++;
-                            // Lógica de alimentação do herbívoro
-                            if ((i + 1) < NUM_ROWS && entity_grid[i + 1][j].type == plant && random_action(HERBIVORE_EAT_PROBABILITY)) {
-                                entity_grid[i + 1][j] = {empty, 0, 0};
-                                entity_grid[i][j].energy += 30;
-                            }
-                            if (i > 0 && entity_grid[i - 1][j].type == plant && random_action(HERBIVORE_EAT_PROBABILITY)) {
-                                entity_grid[i - 1][j] = {empty, 0, 0};
-                                entity_grid[i][j].energy += 30;
-                            }
-                            if ((j + 1) < NUM_ROWS && entity_grid[i][j + 1].type == plant && random_action(HERBIVORE_EAT_PROBABILITY)) {
-                                entity_grid[i][j + 1] = {empty, 0, 0};
-                                entity_grid[i][j].energy += 30;
-                            }
-                            if (j > 0 && entity_grid[i][j - 1].type == plant && random_action(HERBIVORE_EAT_PROBABILITY)) {
-                                entity_grid[i][j - 1] = {empty, 0, 0};
-                                entity_grid[i][j].energy += 30;
-                            }
-                            // Lógica de reprodução do herbívoro
-                            if (random_action(HERBIVORE_REPRODUCTION_PROBABILITY) && entity_grid[i][j].energy >= 20) {
-                                // Verifica as casas adjacentes e armazena no vetor available_pos
-                                if ((i + 1) < NUM_ROWS && entity_grid[i + 1][j].type == empty) {
-                                    available_pos.push_back(std::make_pair(i + 1, j));
-                                }
-                                if (i > 0 && entity_grid[i - 1][j].type == empty) {
-                                    available_pos.push_back(std::make_pair(i - 1, j));
-                                }
-                                if ((j + 1) < NUM_ROWS && entity_grid[i][j + 1].type == empty) {
-                                    available_pos.push_back(std::make_pair(i, j + 1));
-                                }
-                                if (j > 0 && entity_grid[i][j - 1].type == empty) {
-                                    available_pos.push_back(std::make_pair(i, j - 1));
-                                }
-                                if (!available_pos.empty()) {
-                                    std::uniform_int_distribution<> distribution(0, available_pos.size() - 1);
-                                    int drawing = distribution(generator);
-                                    int line = available_pos[drawing].first;
-                                    int column = available_pos[drawing].second;
-                                    entity_grid[line][column].type = herbivore;
-                                    entity_grid[line][column].energy = 100;
-                                    entity_grid[i][j].energy = entity_grid[i][j].energy - 10;
-                                    analyzed_pos.push_back(std::make_pair(line, column));
-                                    available_pos.clear();
-                                }
-                            }
-                            // Lógica de movimentação do herbívoro
-                            if (random_action(HERBIVORE_MOVE_PROBABILITY)) {
-                                // Verifica as casas adjacentes e armazena no vetor available_pos 
-                                if ((i + 1) < NUM_ROWS && entity_grid[i + 1][j].type == empty) {
-                                    available_pos.push_back(std::make_pair(i + 1, j));
-                                }
-                                if (i > 0 && entity_grid[i - 1][j].type == empty) {
-                                    available_pos.push_back(std::make_pair(i - 1, j));
-                                }
-                                if ((j + 1) < NUM_ROWS && entity_grid[i][j + 1].type == empty) {
-                                    available_pos.push_back(std::make_pair(i, j + 1));
-                                }
-                                if (j > 0 && entity_grid[i][j - 1].type == empty) {
-                                    available_pos.push_back(std::make_pair(i, j - 1));
-                                }
-                                if (!available_pos.empty()) {
-                                    std::uniform_int_distribution<> distribution(0, available_pos.size() - 1);
-                                    int drawing = distribution(generator);
-                                    int line = available_pos[drawing].first;
-                                    int column = available_pos[drawing].second;
-                                    entity_grid[line][column] = {herbivore, entity_grid[i][j].energy - 5, entity_grid[i][j].age};
-                                    entity_grid[i][j] = {empty, 0, 0};
-                                    analyzed_pos.push_back(std::make_pair(line, column));
-                                    available_pos.clear();
-                                }
-                            }
-                        }
+                        std::thread therbivore(herbivore_thread, i, j);
+                        therbivore.join();
                     } 
                     // Caso a entidade seja do tipo carnívoro
                     else if (entity_grid[i][j].type == carnivore) {
-                        // Caso tenha atingido 100 anos, ou a energia tenha acabado, o carnívoro morre
-                        if (entity_grid[i][j].age == 100 || entity_grid[i][j].energy <= 0) {
-                            entity_grid[i][j] = {empty, 0, 0};
-                        } else {
-                            // Caso o carnívoro não tenha morrido, incrementa a idade
-                            entity_grid[i][j].age++;
-                            // Lógica de alimentação do carnívoro
-                            if (i + 1 < NUM_ROWS && entity_grid[i + 1][j].type == herbivore && random_action(CARNIVORE_EAT_PROBABILITY)) {
-                                entity_grid[i + 1][j] = {empty, 0, 0};
-                                entity_grid[i][j].energy += 20;
-                            }
-                            if (i > 0 && entity_grid[i - 1][j].type == herbivore && random_action(CARNIVORE_EAT_PROBABILITY)) {
-                                entity_grid[i - 1][j] = {empty, 0, 0};
-                                entity_grid[i][j].energy += 20;
-                            }
-                            if (j + 1 < NUM_ROWS && entity_grid[i][j + 1].type == herbivore && random_action(CARNIVORE_EAT_PROBABILITY)) {
-                                entity_grid[i][j + 1] = {empty, 0, 0};
-                                entity_grid[i][j].energy += 20;
-                            }
-                            if (j > 0 && entity_grid[i][j - 1].type == herbivore && random_action(CARNIVORE_EAT_PROBABILITY)) {
-                                entity_grid[i][j - 1] = {empty, 0, 0};
-                                entity_grid[i][j].energy += 20;
-                            }
-                            // Lógica de reprodução do carnívoro
-                            if (random_action(CARNIVORE_REPRODUCTION_PROBABILITY) && entity_grid[i][j].energy >= 20) {
-                                // Verifica as casas adjacentes e armazena no vetor available_pos
-                                if ((i + 1) < NUM_ROWS && entity_grid[i + 1][j].type == empty) {
-                                    available_pos.push_back(std::make_pair(i + 1, j));
-                                }
-                                if (i > 0 && entity_grid[i - 1][j].type == empty) {
-                                    available_pos.push_back(std::make_pair(i - 1, j));
-                                }
-                                if ((j + 1) < NUM_ROWS && entity_grid[i][j + 1].type == empty) {
-                                    available_pos.push_back(std::make_pair(i, j + 1));
-                                }
-                                if (j > 0 && entity_grid[i][j - 1].type == empty) {
-                                    available_pos.push_back(std::make_pair(i, j - 1));
-                                }
-                                if (!available_pos.empty()) {
-                                    std::uniform_int_distribution<> distribution(0, available_pos.size() - 1);
-                                    int drawing = distribution(generator);
-                                    int line = available_pos[drawing].first;
-                                    int column = available_pos[drawing].second;
-                                    entity_grid[line][column] = {carnivore, 100, 0};
-                                    entity_grid[i][j].energy = entity_grid[i][j].energy - 10;
-                                    analyzed_pos.push_back(std::make_pair(line, column));
-                                    available_pos.clear();
-                                }
-                            }
-                            // Lógica de movimentação do carnívoro
-                            if (random_action(CARNIVORE_MOVE_PROBABILITY)) {
-                                // Verifica as casas adjacentes e armazena no vetor available_pos
-                                if ((i + 1) < NUM_ROWS && entity_grid[i + 1][j].type == empty) {
-                                    available_pos.push_back(std::make_pair(i + 1, j));
-                                }
-                                if (i > 0 && entity_grid[i - 1][j].type == empty) {
-                                    available_pos.push_back(std::make_pair(i - 1, j));
-                                }
-                                if ((j + 1) < NUM_ROWS && entity_grid[i][j + 1].type == empty) {
-                                    available_pos.push_back(std::make_pair(i, j + 1));
-                                }
-                                if (j > 0 && entity_grid[i][j - 1].type == empty) {
-                                    available_pos.push_back(std::make_pair(i, j - 1));
-                                }
-                                if (!available_pos.empty()) {
-                                    std::uniform_int_distribution<> distribution(0, available_pos.size() - 1);
-                                    int drawing = distribution(generator);
-                                    int line = available_pos[drawing].first;
-                                    int column = available_pos[drawing].second;
-                                    entity_grid[line][column] = {carnivore, entity_grid[i][j].energy - 5, entity_grid[i][j].age};
-                                    entity_grid[i][j] = {empty, 0, 0};
-                                    analyzed_pos.push_back(std::make_pair(line, column));
-                                    available_pos.clear();
-                                }
-                            }
-                        }
+                        std::thread tcarnivore(carnivore_thread, i, j);
+                        tcarnivore.join();
                     }
                 }
             }
@@ -349,7 +378,6 @@ int main() {
         nlohmann::json json_grid = entity_grid; 
         return json_grid.dump(); 
     });
-
     // Roda o servidor
     app.port(8080).run();
     return 0;
